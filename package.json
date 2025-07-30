@@ -1,0 +1,35 @@
+{
+  "name": "site-management-cli",
+  "version": "1.0.0",
+  "description": "Herramientas CLI para gestión de contenido del sitio",
+  "main": "index.js",
+  "author": "GenesisMauries",
+  "license": "ISC",
+  "bin": {
+    "site-cli": "./index.js"
+  },
+  "scripts": {
+    "cmd": "node index.js",
+    "scan": "node index.js scan",
+    "descirculate": "node index.js descirculate",
+    "delete-canonical": "node index.js delete-canonical",
+    "delete-sections": "node index.js delete-sections",
+    "videos-report": "node index.js videos-report",
+    "delete-galleries": "node index.js delete-galleries",
+    "delete-photos": "node index.js delete-photos",
+    "delete-site": "node index.js delete-site",
+    "help": "node index.js help"
+  },
+  "keywords": [
+    "cli",
+    "content-management",
+    "automation"
+  ],
+  "engines": {
+    "node": ">=14.0.0"
+  },
+  "dependencies": {
+    "axios": "^1.11.0",
+    "dotenv": "^17.2.1"
+  }
+}
