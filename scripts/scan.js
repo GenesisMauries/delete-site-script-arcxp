@@ -99,7 +99,7 @@ const scanContent = async () => {
                 website: WEBSITE_ID,
                 body: JSON.stringify(requestBody),
                 size: 100,
-                _sourceInclude: '_id,type,canonical_website,website,websites,canonical_url,website_url, promo_items.basic',
+                _sourceInclude: '_id,type,canonical_website,website,websites,canonical_url,website_url, promo_items.basic, headlines, content_elements, credits, display_date, labels, promo_items.basic',
             }
         });
 
@@ -120,7 +120,7 @@ const scanContent = async () => {
                         body: JSON.stringify(requestBody),
                         scrollId: scrollId,
                         size: 100,
-                        _sourceInclude: '_id,type,canonical_website,website,websites,canonical_url,website_url, promo_items.basic',
+                        _sourceInclude: '_id,type,canonical_website,website,websites,canonical_url,website_url, promo_items.basic, headlines, content_elements, credits, display_date, labels, promo_items.basic',
                     }
                 });
 
