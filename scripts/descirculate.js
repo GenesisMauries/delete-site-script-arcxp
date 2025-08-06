@@ -1,4 +1,7 @@
 require('dotenv').config();
+const { chain } = require('stream-chain');
+const { parser } = require('stream-json');
+const { streamArray } = require('stream-json/streamers/StreamArray');
 const fs = require('fs');
 const axios = require('axios');
 
@@ -10,6 +13,8 @@ const BASE_URL = `${ORG_NAME}/draft/v1/story`;
 const headers = { Authorization: `Bearer ${API_KEY}` };
 
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+
 
 const handleRateLimiting = async (responseHeaders) => {
     const remaining = parseInt(responseHeaders['x-ratelimit-remaining'], 10);
@@ -35,24 +40,28 @@ const formatAxiosError = (error) => {
 
 const descirculateContent = async () => {
     const reportPath = `./reports-${WEBSITE_ID}/content_scan_results.json`;
-    const logPath = `./reports-${WEBSITE_ID}/descirculated-${Date.now()}.jsonl`;
+    const logPath = `./reports-${WEBSITE_ID}/descirculated.jsonl`;
 
     if (!fs.existsSync(reportPath)) {
         console.error(`❌ No se encontró el archivo: ${reportPath}`);
         return;
     }
 
-    const raw = fs.readFileSync(reportPath, 'utf8');
-    const data = JSON.parse(raw.replace(/,\s*{}\s*]$/, ']'));
     const writer = fs.createWriteStream(logPath, { flags: 'a' });
 
     let successCount = 0;
     let failCount = 0;
 
-    for (const note of data) {
-        const { _id, canonical_website, websites = {} } = note;
+    const pipeline = chain([
+        fs.createReadStream(reportPath, { encoding: 'utf8' }),
+        parser(),
+        streamArray()
+    ]);
 
-        if (!websites.hasOwnProperty(WEBSITE_ID) || canonical_website === WEBSITE_ID) continue;
+    pipeline.on('data', async ({ value: note }) => {
+
+        const { _id, canonical_website, websites = {} } = note;
+        if (canonical_website === WEBSITE_ID || !websites[WEBSITE_ID]) return;
 
         const url = `${BASE_URL}/${_id}/circulation/${WEBSITE_ID}`;
 
@@ -61,41 +70,36 @@ const descirculateContent = async () => {
             await handleRateLimiting(res.headers);
 
             successCount++;
+            writer.write(JSON.stringify({
+                _id, status: 'success', website_id: WEBSITE_ID,
+                canonical_website, timestamp: new Date().toISOString()
+            }) + '\n');
             console.log(`🔄 Nota ${_id} descirculada`);
 
-            writer.write(JSON.stringify({
-                _id,
-                status: 'success',
-                website_id: WEBSITE_ID,
-                canonical_website,
-                timestamp: new Date().toISOString()
-            }) + '\n');
-
-        } catch (error) {
-            const errMsg = formatAxiosError(error);
+        } catch (err) {
+            const msg = formatAxiosError(err);
             failCount++;
-            console.error(`❌ Error en nota ${_id}: ${errMsg}`);
-
             writer.write(JSON.stringify({
-                _id,
-                status: 'error',
-                website_id: WEBSITE_ID,
-                canonical_website,
-                error: errMsg,
-                timestamp: new Date().toISOString()
+                _id, status: 'error', website_id: WEBSITE_ID,
+                canonical_website, error: msg, timestamp: new Date().toISOString()
             }) + '\n');
-
-            await delay(1000); 
+            console.error(`❌ Error en nota ${_id}: ${msg}`);
+            await delay(1000);
         }
+        await delay(200);
 
-        await delay(200); 
-    }
+    });
 
-    writer.end();
-    console.log(`\n✅ Descirculación finalizada.`);
-    console.log(`   ✔️  Éxitos: ${successCount}`);
-    console.log(`   ❌ Errores: ${failCount}`);
-    console.log(`📄 Log en: ${logPath}`);
+    pipeline.on('end', () => {
+        writer.end();
+        console.log(`\n✅ Descirculación finalizada. Éxitos: ${successCount}, Errores: ${failCount}`);
+        console.log(`📄 Log: ${logPath}`);
+    });
+
+    pipeline.on('error', err => {
+        console.error('💥 Error en el stream:', err);
+        writer.end();
+    });
 };
 
 module.exports = {
