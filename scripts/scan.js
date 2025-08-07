@@ -76,7 +76,9 @@ const scanContent = async () => {
     const requestBody = {
         query: {
             bool: {
-                minimum_should_match: 1,
+                "must": {
+                    "term": { "revision.published": "false" }
+                },
                 should: [
                     { match: { "type": "story" } },
                     { match: { "type": "gallery" } },

@@ -1,13 +1,8 @@
 require('dotenv').config();
 const fs = require('fs');
 const axios = require('axios');
-
-const API_KEY = process.env.ARC_ACCESS_TOKEN;
-const ORG_NAME = process.env.CONTENT_BASE;
-const WEBSITE_ID = process.env.WEBSITE_ID;
-const BASE_URL = `${ORG_NAME}/draft/v1/story`;
-
-const headers = { Authorization: `Bearer ${API_KEY}` };
+const { parser } = require('stream-json');
+const { streamArray } = require('stream-json/streamers/StreamArray');
 
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -34,68 +29,88 @@ const formatAxiosError = (error) => {
 };
 
 const descirculateContent = async () => {
+    const API_KEY = process.env.ARC_ACCESS_TOKEN;
+    const ORG_NAME = process.env.CONTENT_BASE;
+    const WEBSITE_ID = process.env.WEBSITE_ID;
+    const BASE_URL = `${ORG_NAME}/draft/v1/story`;
+    const headers = { Authorization: `Bearer ${API_KEY}` };
+
     const reportPath = `./reports-${WEBSITE_ID}/content_scan_results.json`;
     const logPath = `./reports-${WEBSITE_ID}/descirculated-${Date.now()}.jsonl`;
 
     if (!fs.existsSync(reportPath)) {
-        console.error(`❌ No se encontró el archivo: ${reportPath}`);
+        console.error(`❌ No se encontró el archivo de reporte: ${reportPath}`);
         return;
     }
 
-    const raw = fs.readFileSync(reportPath, 'utf8');
-    const data = JSON.parse(raw.replace(/,\s*{}\s*]$/, ']'));
-    const writer = fs.createWriteStream(logPath, { flags: 'a' });
 
+    const writer = fs.createWriteStream(logPath, { flags: 'a' });
     let successCount = 0;
     let failCount = 0;
+    let totalProcessed = 0;
 
-    for (const note of data) {
-        const { _id, canonical_website, websites = {} } = note;
+    console.log('🚀 Iniciando proceso de descirculación por streaming...');
 
-        if (!websites.hasOwnProperty(WEBSITE_ID) || canonical_website === WEBSITE_ID) continue;
+    await new Promise((resolve, reject) => {
+        const fileStream = fs.createReadStream(reportPath);
+        const jsonStream = streamArray(); 
 
-        const url = `${BASE_URL}/${_id}/circulation/${WEBSITE_ID}`;
+        fileStream.pipe(parser()).pipe(jsonStream);
 
-        try {
-            const res = await axios.delete(url, { headers });
-            await handleRateLimiting(res.headers);
+        jsonStream.on('data', async ({ value: note }) => {
+            jsonStream.pause();
 
-            successCount++;
-            console.log(`🔄 Nota ${_id} descirculada`);
+            totalProcessed++;
+            const { _id, canonical_website, websites = {} } = note;
 
-            writer.write(JSON.stringify({
-                _id,
-                status: 'success',
-                website_id: WEBSITE_ID,
-                canonical_website,
-                timestamp: new Date().toISOString()
-            }) + '\n');
+            if (!websites || !_id || !websites.hasOwnProperty(WEBSITE_ID) || canonical_website === WEBSITE_ID) {
+                jsonStream.resume();
+                return;
+            }
 
-        } catch (error) {
-            const errMsg = formatAxiosError(error);
-            failCount++;
-            console.error(`❌ Error en nota ${_id}: ${errMsg}`);
+            const url = `${BASE_URL}/${_id}/circulation/${WEBSITE_ID}`;
 
-            writer.write(JSON.stringify({
-                _id,
-                status: 'error',
-                website_id: WEBSITE_ID,
-                canonical_website,
-                error: errMsg,
-                timestamp: new Date().toISOString()
-            }) + '\n');
+            try {
+                const res = await axios.delete(url, { headers });
+                await handleRateLimiting(res.headers);
+                successCount++;
+                console.log(`[${totalProcessed}] 🔄 Nota ${_id} descirculada`);
 
-            await delay(1000); 
-        }
+                writer.write(JSON.stringify({ _id, status: 'success', website_id: WEBSITE_ID, timestamp: new Date().toISOString() }) + '\n');
 
-        await delay(200); 
-    }
+            } catch (error) {
+                const errMsg = formatAxiosError(error);
+                failCount++;
+                console.error(`[${totalProcessed}] ❌ Error en nota ${_id}: ${errMsg}`);
+
+                writer.write(JSON.stringify({ _id, status: 'error', website_id: WEBSITE_ID, error: errMsg, timestamp: new Date().toISOString() }) + '\n');
+
+                await delay(1000); 
+            }
+
+            await delay(200);
+
+      
+            jsonStream.resume();
+        });
+
+        jsonStream.on('end', () => {
+            console.log('✅ Stream finalizado. Todas las notas han sido procesadas.');
+            resolve();
+        });
+
+        jsonStream.on('error', (err) => {
+            console.error('❌ Error fatal durante el streaming del JSON:', err);
+            reject(err);
+        });
+    });
 
     writer.end();
-    console.log(`\n✅ Descirculación finalizada.`);
-    console.log(`   ✔️  Éxitos: ${successCount}`);
+    console.log(`\n🏁 Descirculación finalizada.`);
+    console.log(`   Processed: ${totalProcessed}`);
+    console.log(`   ✔️ Éxitos: ${successCount}`);
     console.log(`   ❌ Errores: ${failCount}`);
-    console.log(`📄 Log en: ${logPath}`);
+    console.log(`📄 Log de operaciones guardado en: ${logPath}`);
 };
 
 module.exports = {
