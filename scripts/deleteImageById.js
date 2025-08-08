@@ -1,103 +1,111 @@
-require('dotenv').config();
+
 const axios = require('axios');
 const fs = require('fs');
+const path = require('path');
 
-const API_KEY = process.env.ARC_ACCESS_TOKEN;
-const ORG_NAME = process.env.CONTENT_BASE;
-const WEBSITE_ID = process.env.WEBSITE_ID;
+const orgID = process.env.CONTENT_BASE;;
+const accessToken = process.env.ARC_ACCESS_TOKEN;;
+const website = process.env.WEBSITE_ID;
+const dryRun = true;
 
-const REPORT_PATH = `./reports-${WEBSITE_ID}/content_scan_results.json`;
-const LOG_PATH = `./reports-${WEBSITE_ID}/deleted-photos-${Date.now()}.jsonl`;
+const deletedLogPath = `./reports-${website}/deleted_photos.jsonl`
+const dryRunLogPath = `./reports-${website}/dryrun_photos.jsonl`;
 
-const OPS_URL = `${ORG_NAME}/contentops/v1/delete`;
+
+fs.writeFileSync(dryRunLogPath, '');
+fs.writeFileSync(deletedLogPath, '');
 
 const headers = {
-    Authorization: `Bearer ${API_KEY}`,
+    Authorization: `Bearer 24SKEVVGFBV7E5QV6G97C9615L6RIGP7q15RmmgnCEeCIMyZCDPRIv6rH2SlOQLjX8qzfl1y`,
     'Content-Type': 'application/json'
 };
 
-const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+async function getPhotos(website, offset = 0, limit = 50) {
+    const url = `https://api.metroworldnews.arcpublishing.com/photo/api/v2/photos`;
 
-const deleteImages = async () => {
-    if (!fs.existsSync(REPORT_PATH)) {
-        console.error(`❌ No se encontró el archivo: ${REPORT_PATH}`);
-        return;
+    try {
+        const res = await axios.get(url, {
+            headers,
+            params: {
+                primaryWebsite: website,
+                offset,
+                limit
+            }
+        });
+
+        return res.data || [];
+    } catch (error) {
+        if (error.response) {
+            console.error(`❌ Error al obtener fotos:`, error.response.status, error.response.statusText);
+            console.error('🧾 Detalle:', error.response.data);
+        } else if (error.request) {
+            console.error('❌ No hubo respuesta del servidor.');
+            console.error('📡 Request:', error.request);
+        } else {
+            console.error('❌ Error al configurar la solicitud:', error.message);
+        }
+        return [];
     }
+}
 
-    const raw = fs.readFileSync(REPORT_PATH, 'utf8');
-    const data = JSON.parse(raw.replace(/,\s*{}\s*]$/, ']'));
-    const writer = fs.createWriteStream(LOG_PATH, { flags: 'a' });
+async function deletePhoto(photoId) {
+    const url = `https://api.metroworldnews.arcpublishing.com/photo/api/v2/photos/${photoId}`;
 
-    const seen = new Set();
-    let deleted = 0;
-    let failed = 0;
-    let duplicated = 0;
+    try {
+        await axios.delete(url, { headers });
+        return true;
+    } catch (error) {
+        console.error(`❌ Error al eliminar ${photoId}:`, error.response?.status, error.response?.statusText);
+        return false;
+    }
+}
 
-    for (const [index, item] of data.entries()) {
-        const id = item?.promo_items?.basic?._id;
+function logJsonLine(filePath, photo) {
+    const data = {
+        id: photo._id || photo.id,
+        originalName: photo.originalName || null,
+        caption: photo.caption || null,
+        created_date: photo.created_date || null,
+        updated_date: photo.updated_date || null
+    };
 
-        if (!id) continue;
+    fs.appendFileSync(filePath, JSON.stringify(data) + '\n');
+}
 
-        if (seen.has(id)) {
-            duplicated++;
-            console.log(`⚠️  [${index + 1}] Imagen duplicada: ${id}`);
+async function deleteAllPhotos() {
+    let offset = 0;
+    const limit = 50;
+    let totalProcessed = 0;
 
-            writer.write(JSON.stringify({
-                _id: id,
-                status: 'duplicated',
-                timestamp: new Date().toISOString()
-            }) + '\n');
+    while (true) {
+        const photos = await getPhotos(website, offset, limit);
+        if (photos.length === 0) break;
 
-            continue;
+        for (const photo of photos) {
+            const photoId = photo._id || photo.id;
+
+            if (dryRun) {
+                console.log(`🔍 [dry-run] Imagen que se eliminaría: ${photoId}`);
+                logJsonLine(dryRunLogPath, photo);
+            } else {
+                const success = await deletePhoto(photoId);
+                if (success) {
+                    console.log(`✅ Imagen eliminada: ${photoId}`);
+                    logJsonLine(deletedLogPath, photo);
+                }
+            }
+
+            totalProcessed++;
         }
 
-        seen.add(id);
-
-        const payload = {
-            type: 'image-operation',
-            _id: id,
-            operation: 'delete'
-        };
-
-        try {
-            const res = await axios.put(OPS_URL, payload, { headers });
-            console.log(`✅ [${index + 1}] Imagen ${id} eliminada.`);
-
-            writer.write(JSON.stringify({
-                _id: id,
-                status: 'deleted',
-                timestamp: new Date().toISOString()
-            }) + '\n');
-
-            deleted++;
-        } catch (err) {
-            const errMsg = err.response
-                ? `Status: ${err.response.status} - ${JSON.stringify(err.response.data)}`
-                : err.message;
-
-            console.error(`❌ [${index + 1}] Error eliminando ${id}: ${errMsg}`);
-
-            writer.write(JSON.stringify({
-                _id: id,
-                status: 'error',
-                error: errMsg,
-                timestamp: new Date().toISOString()
-            }) + '\n');
-
-            failed++;
-        }
-
-        await delay(300);
+        offset += limit;
     }
 
-    writer.end();
-    console.log('\n📋 Resumen:');
-    console.log(`   ✔️ Eliminadas: ${deleted}`);
-    console.log(`   ⚠️  Duplicadas: ${duplicated}`);
-    console.log(`   ❌ Errores: ${failed}`);
-    console.log(`📄 Log en: ${LOG_PATH}`);
-};
+    console.log(`\n🎯 Total de imágenes ${dryRun ? 'detectadas (dry-run)' : 'eliminadas'}: ${totalProcessed}`);
+    console.log(`📝 Log guardado en: ${dryRun ? dryRunLogPath : deletedLogPath}`);
+}
 
+deleteAllPhotos();
 module.exports = {
-    deleteImages
+    deleteAllPhotos
 };

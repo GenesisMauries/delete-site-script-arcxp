@@ -18,7 +18,8 @@
     "delete-galleries": "node index.js delete-galleries",
     "delete-photos": "node index.js delete-photos",
     "delete-site": "node index.js delete-site",
-    "help": "node index.js help"
+    "help": "node index.js help",
+    "get-photo": "node index.js get-photo"
   },
   "keywords": [
     "cli",

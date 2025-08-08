@@ -7,8 +7,9 @@ const commands = {
     'delete-sections': () => require('./scripts/deleteSections').deleteSections(),
     'videos-report': () => require('./scripts/videosReport').videosReport(),
     'delete-galleries': () => require('./scripts/deleteGalleries').deleteGalleries(),
-    'delete-photos': () => require('./scripts/deleteImageById').deleteImages(),
-    'delete-site': () => require('./scripts/deleteSite').deleteSite()
+    'delete-photos': () => require('./scripts/deleteImageById').deleteAllPhotos(),
+    'delete-site': () => require('./scripts/deleteSite').deleteSite(),
+    'get-photo': () => require('./scripts/getPhotoById').getPhotoInfo('QMR6JBITVZDKTPVQTT3OYCISPI')
 };
 
 const showHelp = () => {
